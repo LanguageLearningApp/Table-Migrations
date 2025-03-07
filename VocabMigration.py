@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 # Configuration – update these values as needed
 REGION = 'us-east-1'
 SOURCE_TABLE_NAME = 'dev-languageApp-spanishVocab'
-TARGET_TABLE_NAME = 'juno-middleware-languageApp-ChatterBoxVocab'
+TARGET_TABLE_NAME = 'jared-data-languageApp-ChatterBoxVocab'
 
 # Initialize DynamoDB resource and tables
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
@@ -26,17 +26,22 @@ def transform_item(item):
     """
     Transform a deserialized item from the source schema into the target schema.
     """
-    # Convert list fields to strings where necessary
-    english_options = ", ".join(item.get("EnglishOptions", [])) if isinstance(item.get("EnglishOptions"), list) else ""
-    spanish_options = ", ".join(item.get("SpanishOptions", [])) if isinstance(item.get("SpanishOptions"), list) else ""
+    # Convert lists to JSON-encoded strings directly (no {"S": ...} wrapping here)
+    english_options = json.dumps(item.get("EnglishOptions", [])) if isinstance(item.get("EnglishOptions"), list) else "[]"
+    spanish_options = json.dumps(item.get("SpanishOptions", [])) if isinstance(item.get("SpanishOptions"), list) else "[]"
     
-    # Join syllables into a single string (strip any accidental extra whitespace)
-    syllables = "".join(item.get("Syllables", [])).strip() if isinstance(item.get("Syllables"), list) else ""
+    # Extract syllables from the source data and JSON-encode as a list
+    syllables_list = item.get("Syllables", []) if isinstance(item.get("Syllables"), list) else []
+    # If syllables_list contains dictionaries (e.g., from raw DynamoDB format), extract the "S" values
+    if syllables_list and isinstance(syllables_list[0], dict) and "S" in syllables_list[0]:
+        syllables = json.dumps([syllable["S"].strip() for syllable in syllables_list])
+    else:
+        syllables = json.dumps([syllable.strip() for syllable in syllables_list])
     
     # Convert the syllable sounds list (of dicts) into a JSON string
     syllable_sounds = json.dumps(item.get("Syllable_Sounds", []))
     
-    # Handle potential key naming differences for the image URL (e.g. "ImageUrl" vs "ImageURL")
+    # Handle potential key naming differences for the image URL
     image_url = item.get("ImageUrl") or item.get("ImageURL", "")
     
     # Build the new item according to the target schema
@@ -47,7 +52,7 @@ def transform_item(item):
         "Base_Lang_Code": "EN",  # Default base language code
         "Base_Lang_Options": english_options,
         "Targ_Word": item.get("SpanishWord", ""),
-        "Targ_Lang_Code": "ES",      # Default target language code
+        "Targ_Lang_Code": "ES",  # Default target language code
         "Targ_Lang_Options": spanish_options,
         "Explanation_Word_Timing": item.get("Explanation_Word_Timing", ""),
         "Phonetic_Transcription": item.get("Phonetic_Transcription", ""),
@@ -59,7 +64,6 @@ def transform_item(item):
         "ImageURL": image_url
     }
     return new_item
-
 def migrate_items():
     try:
         print("Starting migration...")
